@@ -1,0 +1,355 @@
+---
+title: "PakWheels Data - Final Project"
+author: "Khawaja Hassan Abbas"
+date: "12/14/2021"
+output: 
+pdf_document:
+  extra_dependencies: ["float"]
+---
+
+```{r setup, include=FALSE}
+# CLEAR MEMORY
+rm(list=ls())
+
+getwd()
+# Import libraries
+library(tidyverse)
+library(haven)
+library(data.table)
+library(rms)
+library(lspline)
+library(huxtable)
+library(modelsummary)
+library(pscl)
+library(mfx)
+library(kableExtra)
+library(lspline)
+library(dplR)
+library(fixest)
+library(ggthemes)
+library(kableExtra)
+getwd()
+```
+
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+raw_pakwheels_data <- read_csv(url("https://raw.githubusercontent.com/Khawaja9622/DA2-Coding1_Final_Project/main/Raw_data/pakwheels-11Jul2020-2.csv"))
+
+
+# cleaning data based on honda civic, dropping features which are no available (only removed 3 rows,dropping columns since it was same for all the object)
+
+#Filtering data on Honda Civic
+
+clean_pakwheels_data<- raw_pakwheels_data %>% filter(Name=="Honda Civic Oriel 1.8 i-VTEC CVT 2017") 
+
+# Dropping observation where features are NA and only ABS
+
+clean_pakwheels_data<-clean_pakwheels_data %>% filter(!is.na(Features)) %>%  
+  filter(Features != "ABS")
+
+# dropping observation where registered city is NA
+
+colnames(clean_pakwheels_data)[7] <- "Registered_city"
+clean_pakwheels_data<-clean_pakwheels_data %>% filter(Registered_city!="Un-Registered")
+
+# converting price from character to integer 
+clean_pakwheels_data$Price <- as.integer(clean_pakwheels_data$Price)
+
+# dropping row where price is NA
+clean_pakwheels_data<-clean_pakwheels_data %>% filter(!is.na(Price)) 
+
+# dropping columns which are not necessary for 
+clean_pakwheels_data <- clean_pakwheels_data[, -c(1,4,8,9,10,13,15,16)]
+
+# filtering data based on KLI (capital, two main metropolitan cities since only 10 observation were from others cities )
+
+clean_pakwheels_data <-filter(clean_pakwheels_data, Registered_city %in% c("Lahore", "Karachi", "Islamabad"))
+
+# filtering data for cars for most frequent color 
+clean_pakwheels_data <-filter(clean_pakwheels_data, Color %in% c("Black", "White", "Grey","Silver"))
+
+#  Creating factor  for registered city & color 
+clean_pakwheels_data$Registered_city <- as.factor(clean_pakwheels_data$Registered_city)
+clean_pakwheels_data$Color <- as.factor(clean_pakwheels_data$Color)
+clean_pakwheels_data$Assembly <- as.factor(clean_pakwheels_data$Assembly)
+
+
+#dropping raw data 
+rm(raw_pakwheels_data)
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE,, include=FALSE}
+
+# converting mileage in log to normal distribute the right hand side distribution.
+# to check the if the observation were clustered on one side that why we have to take log of mileage 
+
+sc <- ggplot(data= clean_pakwheels_data, aes(x=Mileage, y=Price))+
+  geom_point()+
+   theme_bw()+
+  ggtitle("Scatter Plot - Price ~ Mileage")
+
+sc1 <- ggplot(data= clean_pakwheels_data, aes(x=log(Mileage), y=Price))+
+  geom_point()+
+  theme_bw()+
+  ggtitle("Scatter Plot - Price ~ Log Mileage")
+
+clean_pakwheels_data$log_mileage <- log(clean_pakwheels_data$Mileage)
+
+#  the two unique feature that were there in feature column were navigation system and climate control, so using str_detect try to analyze if there is an association between the price and car having these features 
+
+# adding binary variable for Climate Control  
+clean_pakwheels_data$logical <-  str_detect(clean_pakwheels_data$Features,"Climate Control")
+clean_pakwheels_data$climate_control <-   ifelse(clean_pakwheels_data$logical=="TRUE",1,0)
+clean_pakwheels_data$logical <- NULL
+
+# adding binary for Navigation feature 
+clean_pakwheels_data$logical <-  str_detect(clean_pakwheels_data$Features,"Navigation System")
+clean_pakwheels_data$Navigation_Feature <-   ifelse(clean_pakwheels_data$logical=="TRUE",1,0)
+clean_pakwheels_data$logical <- NULL
+
+
+# count number of observation for each (27/88)
+clean_pakwheels_data %>% filter(climate_control == 1)
+clean_pakwheels_data %>% filter(Navigation_Feature == 1)
+
+# adding binary for Cities 
+clean_pakwheels_data$karachi_reg <- ifelse(clean_pakwheels_data$Registered_city == "Karachi",1,0)
+clean_pakwheels_data$islamabad_reg <- ifelse(clean_pakwheels_data$Registered_city == "Islamabad",1,0)
+clean_pakwheels_data$lahore_reg <- ifelse(clean_pakwheels_data$Registered_city == "Lahore",1,0)
+
+# adding binary for color variable 
+clean_pakwheels_data$white <- ifelse(clean_pakwheels_data$Color == "White",1,0)
+clean_pakwheels_data$silver <- ifelse(clean_pakwheels_data$Color == "Silver",1,0)
+clean_pakwheels_data$black <- ifelse(clean_pakwheels_data$Color == "Black",1,0)
+clean_pakwheels_data$grey <- ifelse(clean_pakwheels_data$Color == "Grey",1,0)
+
+# summary table 
+P95 <- function(x){ quantile(x,.95,na.rm=T)}
+P5 <- function(x){ quantile(x,.05,na.rm=T)}
+
+a <- datasummary( (`Price` = Price ) + 
+             (`Mileage` = Mileage ) + 
+             (`Mileage(log)` = log_mileage ) + 
+             (`Karachi Register` = karachi_reg) + 
+             (`Islamabad Register` = islamabad_reg) + 
+             (`Lahore Register` = lahore_reg) + 
+             (`Climate control` = climate_control )+
+             (`Navigation` = Navigation_Feature ) ~
+               Mean + Median + SD + Min + Max + P5 + P95 , 
+             data = clean_pakwheels_data ,
+             title = 'Descriptive statistics') %>% 
+      kable_styling(latex_options = c("HOLD_position","scale_down"))
+a
+               
+               
+            
+# data summary skim to check the variable summary and skewness of the observation 
+datasummary_skim(clean_pakwheels_data)
+
+
+
+```
+
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#data visualization 
+# price VS  log mileage
+graph_dist <- ggplot(data = clean_pakwheels_data, aes(x=log_mileage, y=Price))+
+  geom_smooth(formula = y~x, method = "loess")+ 
+  ggtitle("Non-Parametric Lowess - Price & Log Mileage ")
+graph_dist
+
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE,, include=FALSE}
+# drawing correlation  matrix to see the regression and interaction of the variables 
+
+# Checking correlations of variables with highly_rated
+
+numeric_df <- keep( clean_pakwheels_data , is.numeric ) 
+
+cT <- round( cor( numeric_df , use = "complete.obs") , 2 )
+# create a lower triangular matrix
+cT[ upper.tri( cT ) ] <- NA 
+# Put it into a tibble format
+melted_cormat <- melt( cT , na.rm = TRUE)
+# Now we can create a heat-map
+ cor_matrix <- ggplot( data = melted_cormat, aes( Var2 , Var1 , fill = value ) )+
+  geom_tile( color = "white" ) +
+  scale_fill_gradient2(low = "green", high = "dark green", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Correlation") +
+  theme_tufte()+ 
+  theme( axis.text.x = element_text(angle = 45, vjust = 1, 
+                                    size = 10, hjust = 1))+
+  labs(y="",x="")+
+  coord_fixed()+
+   ggtitle("Corelation Matrix")
+ cor_matrix
+ 
+ # price with with Islamabad registered/ + ve and Lahore/Karachi -ve 
+ # price with color white +ve black -ve 
+ # price and feature have no as such correlation 
+ 
+
+```
+
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# first regression model with log mileage ~ R2 (4.9%)
+reg1 <- feols( Price~ log_mileage, data = clean_pakwheels_data, vcov = "hetero")
+reg1
+summary(reg1)
+# regression 2 introducing confounding variable cities r2(8.3%)
+reg2 <- feols( Price ~ log_mileage+ lahore_reg + karachi_reg , data = clean_pakwheels_data, vcov="hetero")
+summary(reg2)
+#regression adding color variable 
+reg3 <- feols( Price ~ log_mileage+ lahore_reg + karachi_reg + white + grey + silver, data = clean_pakwheels_data, vcov="hetero")
+summary(reg3)
+# regression 4 with features 
+reg4 <- feols( Price ~ log_mileage+ lahore_reg + karachi_reg + white + grey + silver+climate_control+Navigation_Feature, data = clean_pakwheels_data, vcov="hetero")
+summary(reg4)
+
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+
+summarry_reg <- msummary(list(reg1 , reg2 , reg3 , reg4),
+         fmt="%.0f",
+         gof_omit = 'DF|Deviance|Log.Lik.|F|AIC|BIC|R2|PseudoR2|R2 Adj.|Std.Errors',
+         stars=c('*' = .05, '**' = .01),
+         coef_rename = c("(Intercept)" = "Intercept",
+                         "log_mileage"="Mileage(Log)",
+                          "lahore_reg"="Lahore Registered",
+                          "karachi_reg"="Karachi Registered",
+                          "white"="White Color",
+                          "grey"="Grey Color",
+                          "silver"="Silver Color",
+                         "black"="Black Color",
+                          "climate_control"="Climate Control",
+                          "Navigation_Feature"="Navigation Feature",
+                          "Num.Obs."="Observation"),
+          title = "Regression Model Summary") %>% 
+  kableExtra::kable_styling(latex_options = "hold_position")
+
+summarry_reg
+
+```
+
+
+## Overview 
+The purpose of this Project was to analyze how the prices of used Honda Civic Oriel 1.8 i-VTEC variate on the bases on their total mileage.Moreover, to determine a real relationship between these two variable without exaggeration we introduced confounding variables to our statistical model.The confounding variable that we took into our different models are the registered city,color and distinct features. The description of the variables are as follows:
+
+ - Price: The Re-sale value of car in Pak Rupees [Exchange rate 1 PKR = 0.005 Euros]
+ - Mileage: The number of Kilo-meters the car has done at the time of sale [Km]
+ - Registered City: The city were the car is registered 
+ - Features: The distinct features which come along with each cars 
+ - Color: The 4 most common colors which were being sold 
+
+Lastly the data set used in our analysis is Pak-Wheel Used Cars Data from [**Kaggle**](https://www.kaggle.com/kerneler/starter-pakwheels-cars-dataset-3fec52f8-e/notebook).
+
+## Data Cleaning & Munging 
+
+Our data consisted of more than 56000 observation and to narrow down our analysis we had to munge the data into a useful and use-case-specific form.Therefore, several forms of cleaning procedure were preformed to make sure that our data is ready for our downstream analysis. Now we will be discussing the pipeline for cleaning process that we opted before we could use it in our statistical model.
+
+Like we have mention above that raw data consisted of 50000 plus observation and 150+ different cars.The first step in our cleaning process was to filter out only specific variant and then used that particular variant in our statistical model. After initial filtering we were left with 382 observations but the data was still unstructured and required us to individually scrutinize the independent and the confounding variables. Once we went down the funnel of cleaning process we also dropped the unnecessary columns in our data set.  
+
+- **Price & Features** 
+To start off our data munging we first had to check the number of NA values in each variable and see decide if we can drop them or not. Fortunately, in total there were only 10 NA values (9 in features and 1 in price) so we drop them.One of the reasons for dropping them was that other variables were also missing for these specific observation.
+
+The problem that we had with the features were that almost every car had more or less the same features. Therefore, we had to look and see what were the distinct features which come out to be the `Climate Control` and `Navigation Feature`.Lastly, with the price variable had to be converted into integer since they were initially in character format.
+
+- **Registered city & Color**
+After this we filtered our data on two main criteria , the specific cities and color of the cars. For cities we took the federal capital and two metropolitan cities **(Islamabad, Karachi, Lahore)** & for the color we took the top 4 colors which were being sold. The reason for filtering our data based on these factors was that more than 90 % of our observation belonged to these specific cities and had these colors.However, one additional cleaning that was done to remove the only observation where the car was unregistered.
+
+ - **Creating Binary variables**
+Before we moved to the next process we dropped the columns that were not relevant to our analysis. The next process was to creating binary for our confounding variables so we could use them as dummy variables in our statistical model.However, for features variable we first had to use to `str_detect` function to display logical argument if our distinct features lies in those observation or not. After creating binary variable we run `datasummary_skim` to check if we needed to take log or our given variables or not.Moreover, we also used scatter plot to see if the observation were clustered or well spread. After seeing the result from Exhibit 1 we decided to take log on mileage since the data was right skewed and we had to normalize the distribution. (Exhibit 2 shows scatter plot with log_mileage)
+
+```{r, echo=FALSE}
+a
+```
+
+### Correlation Matrix 
+
+To get an overview of how our variables are associated with one another we created matrix to extract the correlation coefficient for each of them. The correlation matrix shows the level of association of price with our dependent and confounding variables.Looking at the matrix we were able to comprehend that there was positive association of price with Islamabad registered car & White color car.On the other hand, the price was negatively associated with the other two cities and the remaining colors.One interesting find that this matrix indicated was that there was no as such correlation between the the distinct features and the price of the color. You can refer to the matrix in the appendix as Exhibit 3.
+
+## Regression model 
+
+Before running the regression model we make a hypothesis that the expected association with Registered cities was that the car prices in Karachi's will be relatively low as compare to Islamabad.The primary reason is that Karachi being a coastal city, the level of humidity is high leading to the car parts to erode at much faster rate. Moreover, the city infrastructure and traffic condition are not optimal in comparison to other two cities which can also cause the re-sale value to deplete at higher rate.
+
+The second hypothesis was about cars having black color will be having prices comparatively lower. The rationale behind this is that due to dusty atmosphere in the these cities and warm weather condition there is general prejudice in the overall Pakistani population against this color.
+
+Lastly, Climate control and Navigation systems are some luxury features that will be creating some value addition in the price of the car. Therefore the hypothesis is that cars having these features will create a positive change in the re-sale price.
+
+Moving on, using Non-Parametric Lowess method we first checked if the we had to incorporate splines in our model for log mileage. However,as we can see in the curve below the curve was moving in a similar direction without any unusual variation so there was no need for splines.Now we run 4 different regression models and one by one adding the confounding variable and seeing the significance and level of magnitude.
+
+```{r, echo=FALSE,fig.width=6, fig.height=3}
+graph_dist
+```
+
+
+**Price VS Log Mileage**
+
+$$Price:=\beta_0+\beta_1log(Mileage) $$
+
+The first regression model is level-log model showing if our Mileage change by one percent our independent variable will negatively change by PKR 930 on an average. The R squared in our model is approximately around 5% , indicating that around this percentage of variation in price is explained by the log mileage & remaining is left for the residual variation.Moreover, Confidence interval suggest that at 95% significant level, the true beta coefficient in the population will be between -1677.67 to -184.34 on an average which is significantly different from zero. This means that with one percent of a km change the price will be lower within the given range on an average.
+
+**Price VS Log Mileage + Registered City**
+
+$$Price:=\beta_0+\beta_1log(Mileage)+\beta_2Lahore+\beta_3Karachi $$
+
+The second model introduce the dummy variable in the regression equation based on the variable Registered city. Since we initially had an expected relationship that prices of cars with Islamabad registration will be higher so we took it as the base in our statistical model.The beta coefficient of this model states that keeping other factors constant the price of cars which are registered in Karachi will be PKR 107533 lower as comparison to car registered in Islamabad on an average. The confidence interval for these two dummy variable are 90% & 99% respectively.
+
+**Price VS Log Mileage + Registered City + Color **
+
+$$Price:=\beta_0+\beta_1log(Mileage)+\beta_2Lahore+\beta_3Karachi+\beta_4White+\beta_5Grey+\beta_6Silver $$
+
+The third model accounts for the second confounding variable which is the color of the car. Here we have taken black color as our base and the run our statistical model. The beta coefficient for the white states that keeping everything else constant,in comparison to black color,the prices of white will tend to be PKR 67000 higher on an average. The confidence interval for white is 99% , where as for the other colors it tends reflect zero level of confidence.
+
+**Price VS Log Mileage + Registered City + Color + Features **
+
+$$Price:=\beta_0+\beta_1log(Mileage)+\beta_2Lahore+\beta_3Karachi+\beta_4White+\beta_5Grey
++\beta_6Silver+\beta_7Climate+\beta_8Navigation $$
+
+
+ The last model in our analysis is adding our distinct features as confounding variable and analyzing the overall association and changes in our beta coefficients. The result shows that cars having navigation and climate control feature will be having a price  PKR 15500 and  PKR 280 higher respectively. However, if we see the model the confidence interval is zero which that we are uncertain whether there is a effect or not. Having zero in confidence interval implies that this confounding could have a negative or positive effect on the outcome. The summary table for all models are mentioned in the appendix as Exhibit 4.
+ 
+## Conclusion 
+To conclude, we saw how some of our hypothesis were validated by our regression models and how some were rejected.The model 2 authenticate our hypothesis that cars which were registered in Karachi had a comparatively lower price as compare to other cities.Moreover, when comparing model 1 and model 2 we witness it was useful to add Registered cities as the R squared increased, also the coefficient of these two variable are significant at 99% confidence interval.
+
+Moving forward as we add the dummy variable for colors we were able to deduce from model 3 that the price of white cars will be comparatively higher from black car,at a 99% Confidence interval.However, since we have zero confidence interval for the remaining colors we cannot validate that our initial hypothesis we made about the black color cars.
+
+In our last model we were aiming to validate our hypothesis about features creating positive association with the re-sale price of the car.However,our regression model stated that there is no significant relationship between these variables and the price of the car.
+
+Our preferred model is ;
+
+$$Price:=\beta_0+\beta_1log(Mileage)+\beta_2Lahore+\beta_3Karachi+\beta_4White+\beta_5Grey+\beta_6Silver $$
+
+Generally, you choose the models that have higher adjusted and predicted R-squared values.The adjusted R squared increases only if the new term improves the model more than would be expected by chance and it can also decrease with poor quality predictors.Our preferred model is Model 3 where we accounted for the Registered City & the Color confounding variable. The reason for the selection of this model is that with this model our  Adjusted R squared comparatively increased from 8% to 9%. Moreover,our beta coefficient for the dependent variable also changed showing a better magnitude of association.Lastly, the question maybe be raised that why R2 is below 10 % for all these models.The reasons for this can be that the variation in prices can be explained much better if we consider other variables such as price of petrol, prices of their competitors and even the prices of previous model of Honda.
+
+# Appendix 
+
+## Exhibit 1
+```{r, echo=FALSE,fig.width=6, fig.height=3}
+sc
+```
+
+## Exhibit 2
+```{r, echo=FALSE, warning=FALSE, message=FALSE,fig.width=6, fig.height=3}
+sc1
+```
+
+
+## Exhibit 3
+```{r,echo=FALSE, warning=FALSE, message=FALSE,fig.width=8, fig.height=4}
+cor_matrix
+```
+
+## Exhibit 4
+```{r,echo=FALSE, warning=FALSE, message=FALSE,fig.width=6, fig.height=3}
+summarry_reg
+```
+
+
+
+
